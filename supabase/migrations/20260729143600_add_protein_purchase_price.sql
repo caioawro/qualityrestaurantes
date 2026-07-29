@@ -1,0 +1,1 @@
+ALTER TABLE proteins ADD COLUMN IF NOT EXISTS purchase_price numeric NOT NULL DEFAULT 0;
