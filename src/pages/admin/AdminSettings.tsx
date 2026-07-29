@@ -202,8 +202,6 @@ function CategoriesTab() {
 
 function ParametersTab() {
   const [maxLoss, setMaxLoss] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [geminiKey, setGeminiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -214,8 +212,6 @@ function ParametersTab() {
         const map: Record<string, string> = {};
         data.forEach((s: { key: string; value: string }) => { map[s.key] = s.value; });
         setMaxLoss(map['max_loss_percentage'] || '10');
-        setAdminPassword(map['admin_password'] || '');
-        setGeminiKey(map['gemini_api_key'] || '');
       }
     })();
   }, []);
@@ -223,8 +219,6 @@ function ParametersTab() {
   const handleSave = async () => {
     setSaving(true);
     await supabase.from('settings').upsert({ key: 'max_loss_percentage', value: maxLoss });
-    await supabase.from('settings').upsert({ key: 'admin_password', value: adminPassword });
-    await supabase.from('settings').upsert({ key: 'gemini_api_key', value: geminiKey });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -236,15 +230,6 @@ function ParametersTab() {
         <label className="label-field">Percentual Máximo de Perda (%)</label>
         <input className="input-field" inputMode="decimal" value={maxLoss} onChange={(e) => setMaxLoss(e.target.value)} placeholder="Ex: 10" />
         <p className="text-xs text-gray-400 mt-1">Acima deste valor, alertas de perda serão exibidos</p>
-      </div>
-      <div>
-        <label className="label-field">Senha de Acesso Admin</label>
-        <input className="input-field" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-      </div>
-      <div>
-        <label className="label-field">Google Gemini API Key</label>
-        <input type="password" className="input-field" placeholder="AIzaSy..." value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} />
-        <p className="text-xs text-gray-400 mt-1">Usada para a Inteligência Artificial ler os relatórios em PDF.</p>
       </div>
       <div className="flex items-center gap-3">
         <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">

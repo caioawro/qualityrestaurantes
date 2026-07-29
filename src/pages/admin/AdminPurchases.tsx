@@ -1,19 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
-import { UploadCloud, FileText, Loader2, ShoppingCart, Beef, Package, AlertCircle } from 'lucide-react';
+import { UploadCloud, FileText, Loader2, ShoppingCart, Beef, AlertCircle, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Dish, Protein, Cut } from '../../lib/types';
 
 interface BuyItem {
+  id: string; // unique internal id
   name: string;
   quantity: number;
   isDish: boolean;
   matchedDish?: string;
-  rawProteinNeeds?: {
-    proteinName: string;
-    proteinId: string;
-    rawWeightRequired: number; // in grams
-  }[];
+  needsReview?: boolean;
 }
 
 interface ProteinRequirement {
@@ -24,23 +21,42 @@ interface ProteinRequirement {
 }
 
 export function AdminPurchases() {
-  const [apiKey, setApiKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [statusText, setStatusText] = useState('');
   
+  const [dbDishes, setDbDishes] = useState<Dish[]>([]);
+  const [dbProteins, setDbProteins] = useState<Protein[]>([]);
+  const [dbCuts, setDbCuts] = useState<Cut[]>([]);
+
+  const [rawItems, setRawItems] = useState<BuyItem[]>([]);
   const [buyItems, setBuyItems] = useState<BuyItem[]>([]);
+  
   const [proteinReqs, setProteinReqs] = useState<ProteinRequirement[]>([]);
   const [otherItems, setOtherItems] = useState<{name: string, quantity: number}[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+  // Load data once
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('settings').select('value').eq('key', 'gemini_api_key').single();
-      if (data?.value) setApiKey(data.value);
+      const [dishesRes, proteinsRes, cutsRes] = await Promise.all([
+        supabase.from('dishes').select('*, items:dish_items(*)'),
+        supabase.from('proteins').select('*').eq('active', true),
+        supabase.from('cuts').select('*').eq('active', true)
+      ]);
+      if (dishesRes.data) setDbDishes(dishesRes.data as Dish[]);
+      if (proteinsRes.data) setDbProteins(proteinsRes.data as Protein[]);
+      if (cutsRes.data) setDbCuts(cutsRes.data as Cut[]);
     })();
   }, []);
+
+  // Run calculation whenever rawItems changes
+  useEffect(() => {
+    calculateNeeds(rawItems);
+  }, [rawItems, dbDishes, dbProteins, dbCuts]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -52,28 +68,15 @@ export function AdminPurchases() {
     }
 
     if (!apiKey) {
-      setError('Chave de API do Gemini não configurada. Vá em Configurações > Parâmetros.');
+      setError('Chave de API do Gemini não configurada nas Variáveis de Ambiente.');
       return;
     }
 
     setError('');
     setLoading(true);
-    setBuyItems([]);
-    setProteinReqs([]);
-    setOtherItems([]);
+    setRawItems([]);
 
     try {
-      setStatusText('Carregando dados do sistema...');
-      const [dishesRes, proteinsRes, cutsRes] = await Promise.all([
-        supabase.from('dishes').select('*, items:dish_items(*)'),
-        supabase.from('proteins').select('*').eq('active', true),
-        supabase.from('cuts').select('*').eq('active', true)
-      ]);
-
-      const dishes = (dishesRes.data || []) as Dish[];
-      const proteins = (proteinsRes.data || []) as Protein[];
-      const cuts = (cutsRes.data || []) as Cut[];
-
       setStatusText('Lendo o arquivo PDF...');
       const base64Data = await fileToBase64(file);
 
@@ -81,24 +84,28 @@ export function AdminPurchases() {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-      const dishNames = dishes.map(d => d.name).join(', ');
+      const dishNames = dbDishes.map(d => d.name).join(', ');
 
       const prompt = `Você é um assistente de compras para um restaurante. 
 Eu vou te enviar um relatório de Curva ABC (vendas) em PDF.
 Extraia todos os itens vendidos e suas respectivas quantidades.
 Aqui está a lista de pratos que temos cadastrados no sistema: [${dishNames}].
 
-Para cada item encontrado no PDF, verifique se ele se parece com algum dos pratos cadastrados. Se sim, marque is_dish como true e retorne o nome exato do prato cadastrado em matched_dish_name.
-Se não for um prato da lista (ex: Coca-cola, Água, massas extras, itens de revenda direta), marque is_dish como false.
+Para cada item no PDF:
+1. Verifique se ele corresponde exatamente a um prato da lista. Se sim: is_dish=true, matched_dish_name="nome exato", needs_review=false.
+2. Verifique se ele PARECE ser um prato da lista, mas está escrito diferente (ex: "Filet Al Formaggio" vs "Filé ao Formaggio"). Se sim: is_dish=true, matched_dish_name="nome mais provável da lista", needs_review=true.
+3. Se o nome contiver palavras como "Prato", "Filé", "Salmão", "Camarão" e você achar que deveria ser um prato mas não tem certeza de qual: is_dish=true, matched_dish_name=null, needs_review=true.
+4. Se for bebida (ex: Coca, Água) ou item direto, ou se você tiver certeza absoluta que não é um prato da lista: is_dish=false, matched_dish_name=null, needs_review=false.
 
-Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou texto adicional:
+Retorne APENAS um JSON válido no formato exato:
 {
   "items": [
     {
-      "name_in_pdf": "nome original no pdf",
-      "quantity": 10,
-      "is_dish": true/false,
-      "matched_dish_name": "nome exato da lista de pratos, caso is_dish seja true"
+      "name_in_pdf": "string",
+      "quantity": number,
+      "is_dish": boolean,
+      "matched_dish_name": "string ou null",
+      "needs_review": boolean
     }
   ]
 }`;
@@ -113,93 +120,24 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
         }
       ]);
 
-      setStatusText('Calculando insumos necessários...');
+      setStatusText('Processando resposta...');
       const responseText = result.response.text();
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("IA não retornou um JSON válido.");
       
       const parsed = JSON.parse(jsonMatch[0]);
-      if (!parsed.items || !Array.isArray(parsed.items)) throw new Error("Formato JSON incorreto retornado pela IA.");
+      if (!parsed.items || !Array.isArray(parsed.items)) throw new Error("Formato JSON incorreto.");
 
-      // Calculation Logic
-      const finalItems: BuyItem[] = [];
-      const proteinMap: Record<string, ProteinRequirement> = {};
-      const others: {name: string, quantity: number}[] = [];
+      const newRawItems: BuyItem[] = parsed.items.map((item: any) => ({
+        id: Math.random().toString(36).substring(2, 9),
+        name: item.name_in_pdf,
+        quantity: parseFloat(item.quantity) || 0,
+        isDish: item.is_dish,
+        matchedDish: item.matched_dish_name,
+        needsReview: item.needs_review
+      })).filter((i: BuyItem) => i.quantity > 0);
 
-      for (const item of parsed.items) {
-        const qty = parseFloat(item.quantity) || 0;
-        if (qty <= 0) continue;
-
-        const buyItem: BuyItem = {
-          name: item.name_in_pdf,
-          quantity: qty,
-          isDish: item.is_dish,
-          matchedDish: item.matched_dish_name,
-        };
-
-        if (item.is_dish && item.matched_dish_name) {
-          const dish = dishes.find(d => d.name.toLowerCase() === item.matched_dish_name.toLowerCase());
-          if (dish && dish.items) {
-            buyItem.rawProteinNeeds = [];
-            
-            dish.items.forEach(di => {
-              if (di.item_type === 'cut') {
-                const cut = cuts.find(c => c.name === di.name);
-                if (cut) {
-                  const protein = proteins.find(p => p.id === cut.protein_id);
-                  if (protein) {
-                    const netWeightNeeded = cut.gramatura * di.quantity * qty;
-                    // Example: if loss is 20 (0.2), to get 800g net we need 800 / (1 - 0.2) = 1000g raw
-                    const lossFactor = protein.expected_loss / 100;
-                    const rawWeightNeeded = lossFactor >= 1 ? netWeightNeeded : netWeightNeeded / (1 - lossFactor);
-
-                    buyItem.rawProteinNeeds!.push({
-                      proteinName: protein.name,
-                      proteinId: protein.id,
-                      rawWeightRequired: rawWeightNeeded
-                    });
-
-                    if (!proteinMap[protein.id]) {
-                      proteinMap[protein.id] = {
-                        proteinName: protein.name,
-                        proteinId: protein.id,
-                        totalRawWeight: 0,
-                        expectedLoss: protein.expected_loss
-                      };
-                    }
-                    proteinMap[protein.id].totalRawWeight += rawWeightNeeded;
-                  }
-                }
-              } else {
-                // Manual items inside dishes (e.g., fettuccine)
-                others.push({ name: `${di.name} (para ${qty}x ${dish.name})`, quantity: di.quantity * qty });
-              }
-            });
-          } else {
-            // Matched dish not found exactly, treat as other
-            others.push({ name: item.name_in_pdf, quantity: qty });
-          }
-        } else {
-          // Direct item
-          others.push({ name: item.name_in_pdf, quantity: qty });
-        }
-
-        finalItems.push(buyItem);
-      }
-
-      setBuyItems(finalItems);
-      setProteinReqs(Object.values(proteinMap).sort((a,b) => b.totalRawWeight - a.totalRawWeight));
-      
-      // Aggregate others with same name
-      const aggregatedOthers: Record<string, number> = {};
-      others.forEach(o => {
-        const key = o.name.toLowerCase();
-        aggregatedOthers[key] = (aggregatedOthers[key] || 0) + o.quantity;
-      });
-      setOtherItems(Object.entries(aggregatedOthers).map(([name, qty]) => ({
-        name: others.find(o => o.name.toLowerCase() === name)?.name || name, 
-        quantity: qty
-      })).sort((a,b) => b.quantity - a.quantity));
+      setRawItems(newRawItems);
 
     } catch (err: any) {
       console.error(err);
@@ -210,6 +148,86 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
     }
   };
 
+  const calculateNeeds = (items: BuyItem[]) => {
+    if (!items || items.length === 0) {
+      setBuyItems([]);
+      setProteinReqs([]);
+      setOtherItems([]);
+      return;
+    }
+
+    const proteinMap: Record<string, ProteinRequirement> = {};
+    const others: {name: string, quantity: number}[] = [];
+    const finalBuyItems: BuyItem[] = [];
+
+    for (const item of items) {
+      const finalItem = { ...item };
+
+      if (item.isDish && !item.needsReview && item.matchedDish) {
+        const dish = dbDishes.find(d => d.name.toLowerCase() === item.matchedDish?.toLowerCase());
+        if (dish && dish.items) {
+          dish.items.forEach(di => {
+            if (di.item_type === 'cut') {
+              const cut = dbCuts.find(c => c.name === di.name);
+              if (cut) {
+                const protein = dbProteins.find(p => p.id === cut.protein_id);
+                if (protein) {
+                  const netWeightNeeded = cut.gramatura * di.quantity * item.quantity;
+                  const lossFactor = protein.expected_loss / 100;
+                  const rawWeightNeeded = lossFactor >= 1 ? netWeightNeeded : netWeightNeeded / (1 - lossFactor);
+
+                  if (!proteinMap[protein.id]) {
+                    proteinMap[protein.id] = {
+                      proteinName: protein.name,
+                      proteinId: protein.id,
+                      totalRawWeight: 0,
+                      expectedLoss: protein.expected_loss
+                    };
+                  }
+                  proteinMap[protein.id].totalRawWeight += rawWeightNeeded;
+                }
+              }
+            } else {
+              others.push({ name: `${di.name} (para ${item.quantity}x ${dish.name})`, quantity: di.quantity * item.quantity });
+            }
+          });
+        } else {
+          // Fallback if dish not found in DB
+          others.push({ name: item.name, quantity: item.quantity });
+        }
+      } else if (!item.needsReview) {
+        others.push({ name: item.name, quantity: item.quantity });
+      }
+
+      finalBuyItems.push(finalItem);
+    }
+
+    setBuyItems(finalBuyItems);
+    setProteinReqs(Object.values(proteinMap).sort((a,b) => b.totalRawWeight - a.totalRawWeight));
+    
+    const aggregatedOthers: Record<string, number> = {};
+    others.forEach(o => {
+      const key = o.name.toLowerCase();
+      aggregatedOthers[key] = (aggregatedOthers[key] || 0) + o.quantity;
+    });
+    setOtherItems(Object.entries(aggregatedOthers).map(([name, qty]) => ({
+      name: others.find(o => o.name.toLowerCase() === name)?.name || name, 
+      quantity: qty
+    })).sort((a,b) => b.quantity - a.quantity));
+  };
+
+  const handleResolveMatch = (itemId: string, selectedDishName: string) => {
+    setRawItems(prev => prev.map(i => {
+      if (i.id === itemId) {
+        if (selectedDishName === 'NAO_E_PRATO') {
+          return { ...i, isDish: false, matchedDish: undefined, needsReview: false };
+        }
+        return { ...i, isDish: true, matchedDish: selectedDishName, needsReview: false };
+      }
+      return i;
+    }));
+  };
+
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -218,6 +236,8 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
       reader.onerror = error => reject(error);
     });
   };
+
+  const itemsToReview = rawItems.filter(i => i.needsReview);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -230,8 +250,8 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
         <div className="bg-warning-50 border border-warning-200 p-4 rounded-xl flex gap-3">
           <AlertCircle className="w-5 h-5 text-warning-600 flex-shrink-0" />
           <div>
-            <h3 className="text-sm font-bold text-warning-800">Chave da API ausente</h3>
-            <p className="text-sm text-warning-700 mt-1">Para utilizar essa inteligência artificial, você precisa configurar a Chave de API do Gemini nas Configurações.</p>
+            <h3 className="text-sm font-bold text-warning-800">Variável de Ambiente Ausente</h3>
+            <p className="text-sm text-warning-700 mt-1">A chave <code className="bg-warning-100 px-1 rounded">VITE_GEMINI_API_KEY</code> não foi encontrada nas variáveis de ambiente. Configure no seu arquivo .env local ou no painel da Vercel.</p>
           </div>
         </div>
       )}
@@ -268,9 +288,56 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
         {error && <p className="text-sm text-error-600 mt-4 text-center">{error}</p>}
       </div>
 
+      {/* Interactive Review Box */}
+      {itemsToReview.length > 0 && (
+        <div className="bg-warning-50 border border-warning-200 rounded-2xl p-5 space-y-4 shadow-sm animate-slide-up">
+          <div className="flex items-center gap-3 border-b border-warning-200 pb-3">
+            <HelpCircle className="w-6 h-6 text-warning-600" />
+            <div>
+              <h2 className="font-bold text-warning-900">⚠️ Itens que precisam da sua atenção</h2>
+              <p className="text-sm text-warning-800">A Inteligência Artificial encontrou nomes parecidos com os seus pratos, mas não tem certeza. Confirme as associações abaixo para prosseguir com o cálculo exato:</p>
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            {itemsToReview.map((item) => (
+              <div key={item.id} className="bg-white border border-warning-100 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm text-gray-500">Item no PDF:</p>
+                  <p className="font-bold text-gray-900">{item.name} <span className="font-normal text-gray-500 text-sm">({item.quantity} un)</span></p>
+                </div>
+                
+                <div className="flex-1 max-w-sm flex gap-2">
+                  <select 
+                    className="input-field bg-gray-50 text-sm"
+                    defaultValue={item.matchedDish || ""}
+                    id={`select-${item.id}`}
+                  >
+                    <option value="" disabled>Selecione o prato real...</option>
+                    <option value="NAO_E_PRATO">-- Não é um prato (Venda Direta) --</option>
+                    {dbDishes.map(d => (
+                      <option key={d.id} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
+                  <button 
+                    onClick={() => {
+                      const select = document.getElementById(`select-${item.id}`) as HTMLSelectElement;
+                      if (select && select.value) handleResolveMatch(item.id, select.value);
+                    }}
+                    className="btn-primary whitespace-nowrap px-3 flex items-center gap-1"
+                  >
+                    <CheckCircle2 className="w-4 h-4" /> OK
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Results Area */}
-      {buyItems.length > 0 && (
-        <div className="space-y-6">
+      {buyItems.length > 0 && itemsToReview.length === 0 && (
+        <div className="space-y-6 animate-fade-in">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
             {/* Proteínas */}
@@ -331,8 +398,8 @@ Retorne APENAS um JSON válido no seguinte formato exato, sem marcações ou tex
               <h2 className="font-bold text-gray-900 text-sm">Registro Detalhado da Leitura</h2>
             </div>
             <div className="p-4 text-xs text-gray-600 max-h-60 overflow-y-auto space-y-2">
-              {buyItems.map((item, idx) => (
-                <div key={idx} className="flex gap-2">
+              {buyItems.map((item) => (
+                <div key={item.id} className="flex gap-2">
                   <span className="font-bold min-w-[20px]">{item.quantity}x</span>
                   <span>{item.name}</span>
                   {item.isDish && item.matchedDish ? (

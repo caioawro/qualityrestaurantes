@@ -19,8 +19,7 @@ export function AdminLogin() {
     setLoading(true);
     setError('');
 
-    const { data } = await supabase.from('settings').select('value').eq('key', 'admin_password').single();
-    const adminPassword = data?.value;
+    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD;
 
     if (adminPassword && password === adminPassword) {
       sessionStorage.setItem('admin_auth', 'true');
