@@ -81,9 +81,6 @@ export function AdminPurchases() {
       const base64Data = await fileToBase64(file);
 
       setStatusText('Enviando para a Inteligência Artificial...');
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
       const dishNames = dbDishes.map(d => d.name).join(', ');
 
       const prompt = `Você é um assistente de compras para um restaurante. 
@@ -111,26 +108,45 @@ Retorne APENAS um JSON válido no formato exato:
 }`;
 
       let result;
-      try {
-        result = await model.generateContent([
-          prompt,
-          {
-            inlineData: {
-              data: base64Data.split(',')[1],
-              mimeType: 'application/pdf'
+      let lastError;
+      const modelsToTry = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-pro-latest'];
+      
+      for (const modelName of modelsToTry) {
+        try {
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({ model: modelName });
+          
+          result = await model.generateContent([
+            prompt,
+            {
+              inlineData: {
+                data: base64Data.split(',')[1],
+                mimeType: 'application/pdf'
+              }
             }
-          }
-        ]);
-      } catch (genErr: any) {
-        if (genErr.message?.includes('404')) {
+          ]);
+          // Se der certo, paramos o loop e prosseguimos
+          lastError = null;
+          break;
+        } catch (err: any) {
+          console.warn(`Model ${modelName} failed:`, err.message);
+          lastError = err;
+          // Continua para o próximo modelo
+        }
+      }
+
+      if (lastError && !result) {
+        if (lastError.message?.includes('404')) {
           setStatusText('Buscando modelos compatíveis com a sua chave...');
           const modelsReq = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
           const modelsData = await modelsReq.json();
           const availableModels = (modelsData.models || []).map((m: any) => m.name).join(', ');
-          throw new Error(`O modelo de IA selecionado não está disponível para a sua conta/chave. Modelos disponíveis: ${availableModels}`);
+          throw new Error(`Nenhum dos modelos tentados funcionou para a sua conta. Modelos disponíveis: ${availableModels}`);
         }
-        throw genErr;
+        throw lastError;
       }
+
+      if (!result) throw new Error("Falha ao gerar resposta com a Inteligência Artificial.");
 
       setStatusText('Processando resposta...');
       const responseText = result.response.text();
