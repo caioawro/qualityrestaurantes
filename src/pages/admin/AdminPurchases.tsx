@@ -127,7 +127,7 @@ Retorne APENAS um JSON válido no formato exato:
           const modelsReq = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
           const modelsData = await modelsReq.json();
           const availableModels = (modelsData.models || []).map((m: any) => m.name).join(', ');
-          throw new Error(`O modelo gemini-1.5-flash-latest não está disponível para a sua conta/chave. Modelos disponíveis: ${availableModels}`);
+          throw new Error(`O modelo de IA selecionado não está disponível para a sua conta/chave. Modelos disponíveis: ${availableModels}`);
         }
         throw genErr;
       }
