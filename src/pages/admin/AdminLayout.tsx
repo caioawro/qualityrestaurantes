@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, Beef, Scissors, Settings, Construction, ChefHat,
-  Menu, LogOut, Home, CalendarClock,
+  Menu, LogOut, Home, CalendarClock, ShoppingCart,
 } from 'lucide-react';
 import { navigate } from '../../App';
 
@@ -17,6 +17,7 @@ const MENU = [
   { key: 'admin-cuts', label: 'Cortes', icon: Scissors, path: '/admin/cortes' },
   { key: 'admin-dishes', label: 'Fichas Técnicas', icon: ChefHat, path: '/admin/fichas' },
   { key: 'admin-schedule', label: 'Cronograma', icon: CalendarClock, path: '/admin/cronograma' },
+  { key: 'admin-purchases', label: 'Sugestão de Compras (IA)', icon: ShoppingCart, path: '/admin/compras' },
   { key: 'admin-settings', label: 'Configurações', icon: Settings, path: '/admin/configuracoes' },
 ];
 
