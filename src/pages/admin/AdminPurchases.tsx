@@ -110,15 +110,27 @@ Retorne APENAS um JSON válido no formato exato:
   ]
 }`;
 
-      const result = await model.generateContent([
-        prompt,
-        {
-          inlineData: {
-            data: base64Data.split(',')[1],
-            mimeType: 'application/pdf'
+      let result;
+      try {
+        result = await model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64Data.split(',')[1],
+              mimeType: 'application/pdf'
+            }
           }
+        ]);
+      } catch (genErr: any) {
+        if (genErr.message?.includes('404')) {
+          setStatusText('Buscando modelos compatíveis com a sua chave...');
+          const modelsReq = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          const modelsData = await modelsReq.json();
+          const availableModels = (modelsData.models || []).map((m: any) => m.name).join(', ');
+          throw new Error(`O modelo gemini-1.5-flash-latest não está disponível para a sua conta/chave. Modelos disponíveis: ${availableModels}`);
         }
-      ]);
+        throw genErr;
+      }
 
       setStatusText('Processando resposta...');
       const responseText = result.response.text();
