@@ -14,14 +14,14 @@ interface Props {
 
 interface ItemRow {
   cut_name: string;
-  quantity: number;
-  gramatura: number;
+  quantity: string;
+  gramatura: string;
   total_weight: number;
 }
 
 interface ByproductRow {
   description: string;
-  weight: number;
+  weight: string;
 }
 
 const STEPS = [
@@ -55,7 +55,7 @@ export function NewProcessing({ onBack }: Props) {
   const [pricePerKg, setPricePerKg] = useState('');
   const [beforePhoto, setBeforePhoto] = useState<string | null>(null);
 
-  const [items, setItems] = useState<ItemRow[]>([{ cut_name: '', quantity: 0, gramatura: 0, total_weight: 0 }]);
+  const [items, setItems] = useState<ItemRow[]>([{ cut_name: '', quantity: '0', gramatura: '0', total_weight: 0 }]);
   const [byproducts, setByproducts] = useState<ByproductRow[]>([]);
 
   const [afterPhoto, setAfterPhoto] = useState<string | null>(null);
@@ -114,28 +114,32 @@ export function NewProcessing({ onBack }: Props) {
       if (field === 'cut_name') {
         row.cut_name = value as string;
         const cut = proteinCuts.find((c) => c.name === value);
-        if (cut) row.gramatura = cut.gramatura;
+        if (cut) row.gramatura = String(cut.gramatura);
       } else if (field === 'quantity') {
-        row.quantity = parseInt(String(value)) || 0;
+        row.quantity = String(value);
       } else if (field === 'gramatura') {
-        row.gramatura = parseFloat(String(value).replace(',', '.')) || 0;
+        row.gramatura = String(value);
       }
-      row.total_weight = (row.quantity * row.gramatura) / 1000;
+      
+      const qNum = parseInt(row.quantity) || 0;
+      const gNum = parseFloat(row.gramatura.replace(',', '.')) || 0;
+      row.total_weight = (qNum * gNum) / 1000;
+      
       next[idx] = row;
       return next;
     });
   };
 
-  const addItem = () => setItems((prev) => [...prev, { cut_name: '', quantity: 0, gramatura: 0, total_weight: 0 }]);
+  const addItem = () => setItems((prev) => [...prev, { cut_name: '', quantity: '1', gramatura: '0', total_weight: 0 }]);
   const removeItem = (idx: number) => setItems((prev) => prev.filter((_, i) => i !== idx));
 
-  const addByproduct = () => setByproducts((prev) => [...prev, { description: '', weight: 0 }]);
+  const addByproduct = () => setByproducts((prev) => [...prev, { description: '', weight: '' }]);
   const removeByproduct = (idx: number) => setByproducts((prev) => prev.filter((_, i) => i !== idx));
   const updateByproduct = (idx: number, field: keyof ByproductRow, value: string | number) => {
     setByproducts((prev) => {
       const next = [...prev];
       const row = { ...next[idx] };
-      if (field === 'weight') row.weight = parseFloat(String(value).replace(',', '.')) || 0;
+      if (field === 'weight') row.weight = String(value);
       else row.description = value as string;
       next[idx] = row;
       return next;
@@ -163,7 +167,7 @@ export function NewProcessing({ onBack }: Props) {
   const canProceed = (): boolean => {
     if (step === 0) return responsible.trim() !== '' && proteinId !== '';
     if (step === 1) return grossNum > 0;
-    if (step === 2) return items.some((i) => i.cut_name !== '' && i.quantity > 0);
+    if (step === 2) return items.some((i) => i.cut_name !== '' && (parseInt(i.quantity) || 0) > 0);
     return true;
   };
 
@@ -195,27 +199,27 @@ export function NewProcessing({ onBack }: Props) {
     const processingId = data.id;
 
     // Insert items
-    const validItems = items.filter((i) => i.cut_name !== '' && i.quantity > 0);
+    const validItems = items.filter((i) => i.cut_name !== '' && (parseInt(i.quantity) || 0) > 0);
     if (validItems.length > 0) {
       await supabase.from('processing_items').insert(
         validItems.map((i) => ({
           processing_id: processingId,
           cut_name: i.cut_name,
-          quantity: i.quantity,
-          gramatura: i.gramatura,
+          quantity: parseInt(i.quantity) || 0,
+          gramatura: parseFloat(i.gramatura.replace(',', '.')) || 0,
           total_weight: parseFloat(i.total_weight.toFixed(3)),
         })),
       );
     }
 
     // Insert byproducts
-    const validByproducts = byproducts.filter((b) => b.description !== '' && b.weight > 0);
+    const validByproducts = byproducts.filter((b) => b.description !== '' && (parseFloat(b.weight.replace(',', '.')) || 0) > 0);
     if (validByproducts.length > 0) {
       await supabase.from('processing_byproducts').insert(
         validByproducts.map((b) => ({
           processing_id: processingId,
           description: b.description,
-          weight: parseFloat(b.weight.toFixed(3)),
+          weight: parseFloat((parseFloat(b.weight.replace(',', '.')) || 0).toFixed(3)),
         })),
       );
     }
@@ -364,24 +368,6 @@ export function NewProcessing({ onBack }: Props) {
               </div>
 
               <div>
-                <label className="label-field">Preço por kg (R$)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  className="input-field text-xl font-bold text-center"
-                  placeholder="0,00"
-                  value={pricePerKg}
-                  onChange={(e) => setPricePerKg(e.target.value)}
-                />
-                <p className="text-xs text-gray-400 mt-1 text-center">Custo de compra da proteína</p>
-                {totalCost > 0 && (
-                  <p className="text-xs text-primary-600 font-medium mt-1 text-center">
-                    Custo total: R$ {totalCost.toFixed(2).replace('.', ',')}
-                  </p>
-                )}
-              </div>
-
-              <div>
                 <label className="label-field">Foto Inicial</label>
                 {beforePhoto ? (
                   <div className="relative">
@@ -436,8 +422,8 @@ export function NewProcessing({ onBack }: Props) {
                         key={c.id}
                         onClick={() => {
                           setItems((prev) => [
-                            ...prev.filter((i) => i.cut_name !== '' || i.quantity > 0),
-                            { cut_name: c.name, quantity: 1, gramatura: c.gramatura, total_weight: (c.gramatura) / 1000 },
+                            ...prev.filter((i) => i.cut_name !== '' || i.quantity !== '0'),
+                            { cut_name: c.name, quantity: '1', gramatura: String(c.gramatura), total_weight: (c.gramatura) / 1000 },
                           ]);
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-primary-200 bg-primary-50 text-primary-700 text-sm font-medium hover:bg-primary-600 hover:text-white hover:border-primary-600 transition-all active:scale-95"
@@ -472,11 +458,10 @@ export function NewProcessing({ onBack }: Props) {
               )}
 
               {/* Added items */}
-              {items.filter((i) => i.cut_name !== '' || i.quantity > 0).length > 0 && (
+              {items.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Cortes adicionados</p>
                   {items.map((item, idx) => {
-                    if (item.cut_name === '' && item.quantity === 0) return null;
                     return (
                       <div key={idx} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                         <div className="flex items-center justify-between mb-2">
@@ -503,7 +488,7 @@ export function NewProcessing({ onBack }: Props) {
                           {/* Quantity stepper */}
                           <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-white">
                             <button
-                              onClick={() => updateItem(idx, 'quantity', Math.max(0, item.quantity - 1))}
+                              onClick={() => updateItem(idx, 'quantity', Math.max(0, parseInt(item.quantity) - 1))}
                               className="px-2.5 py-1.5 text-gray-500 hover:bg-gray-100 font-bold text-base transition-colors"
                             >−</button>
                             <input
@@ -513,7 +498,7 @@ export function NewProcessing({ onBack }: Props) {
                               onChange={(e) => updateItem(idx, 'quantity', e.target.value)}
                             />
                             <button
-                              onClick={() => updateItem(idx, 'quantity', item.quantity + 1)}
+                              onClick={() => updateItem(idx, 'quantity', (parseInt(item.quantity) || 0) + 1)}
                               className="px-2.5 py-1.5 text-gray-500 hover:bg-gray-100 font-bold text-base transition-colors"
                             >+</button>
                           </div>
@@ -541,7 +526,7 @@ export function NewProcessing({ onBack }: Props) {
               )}
 
               {/* Empty state */}
-              {items.filter((i) => i.cut_name !== '' || i.quantity > 0).length === 0 && (
+              {items.length === 0 && (
                 <div className="text-center py-6 text-gray-400">
                   <Scissors className="w-8 h-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">Nenhum corte adicionado ainda</p>
@@ -755,7 +740,7 @@ export function NewProcessing({ onBack }: Props) {
     setGrossWeight('');
     setBeforePhoto(null);
     setAfterPhoto(null);
-    setItems([{ cut_name: '', quantity: 0, gramatura: 0, total_weight: 0 }]);
+    setItems([{ cut_name: '', quantity: '0', gramatura: '0', total_weight: 0 }]);
     setByproducts([]);
   }
 }
