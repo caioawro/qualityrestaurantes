@@ -213,7 +213,7 @@ function ParametersTab() {
         const map: Record<string, string> = {};
         data.forEach((s: { key: string; value: string }) => { map[s.key] = s.value; });
         setMaxLoss(map['max_loss_percentage'] || '10');
-        setAdminPassword(map['admin_password'] || 'admin123');
+        setAdminPassword(map['admin_password'] || '');
       }
     })();
   }, []);

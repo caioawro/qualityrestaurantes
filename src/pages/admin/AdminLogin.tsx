@@ -20,9 +20,9 @@ export function AdminLogin() {
     setError('');
 
     const { data } = await supabase.from('settings').select('value').eq('key', 'admin_password').single();
-    const adminPassword = data?.value || 'admin123';
+    const adminPassword = data?.value;
 
-    if (password === adminPassword) {
+    if (adminPassword && password === adminPassword) {
       sessionStorage.setItem('admin_auth', 'true');
       navigate('/admin/dashboard');
     } else {
@@ -67,8 +67,6 @@ export function AdminLogin() {
               {loading ? 'Verificando...' : 'Entrar'}
             </button>
           </form>
-
-          <p className="text-xs text-gray-400 text-center mt-4">Senha padrão: admin123</p>
         </div>
       </div>
     </div>
